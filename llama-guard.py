@@ -1,40 +1,48 @@
 import torch
 import json
 import pandas as pd
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 from datasets import load_dataset
 from tqdm import tqdm
 
-# 1. 環境設定
-model_id = "meta-llama/Llama-Guard-3-1B"
-device = "cpu"
-dtype = torch.bfloat16 
+# 1. 環境設定(ここは2と3で切り替え)
+model_id = "meta-llama/Meta-Llama-Guard-2-8B"
+# model_id = "meta-llama/Llama-Guard-3-8B"
+device="cuda"
+
+# 4bitに量子化
+bnb_config = BitsAndBytesConfig(
+    load_in_4bit=True,
+    bnb_4bit_quant_type="nf4",
+    bnb_4bit_compute_dtype=torch.bfloat16,
+    bnb_4bit_use_double_quant=True
+)
 
 # 2. モデルとトークナイザーのロード
-print("Loading model (Llama Guard 3 - 1B)...")
+print("Loading model (Llama Guard 2 - 8B)...")
 tokenizer = AutoTokenizer.from_pretrained(model_id)
 model = AutoModelForCausalLM.from_pretrained(
     model_id,
-    torch_dtype=dtype,
-    device_map="auto",
+    quantization_config=bnb_config,
+    device_map="cuda",
 )
 
 def moderate(chat):
     """
-    Llama Guard 3 による有害性判定
+    Llama Guard 2/3 による有害性判定
     """
     # テンプレート適用 (BatchEncodingオブジェクトを取得)
     inputs = tokenizer.apply_chat_template(chat, return_tensors="pt").to(device)
-    
+
     with torch.no_grad():
         # **inputs で辞書を展開して渡すことで、型エラーを回避
         output = model.generate(
-            **inputs, 
+            **inputs,
             max_new_tokens=20,
             pad_token_id=0,
             do_sample=False
         )
-    
+
     # 入力プロンプトの長さを取得して、生成された判定部分のみを抽出
     prompt_len = inputs["input_ids"].shape[-1]
     return tokenizer.decode(output[0][prompt_len:], skip_special_tokens=True).strip()
@@ -57,12 +65,12 @@ for data in tqdm(test_list):
         {"role": "user", "content": data["user_input"]},
         {"role": "assistant", "content": data["model_output"]}
     ]
-    
+
     prediction = moderate(chat)
-    
+
     # 正解ラベルの整理
     gt_label = "unsafe" if data["toxicity"] == 1 else "safe"
-    
+
     # 判定結果の保存
     results.append({
         "conv_id": data["conv_id"],
@@ -77,10 +85,10 @@ accuracy = sum(1 for r in results if r["is_correct"]) / len(results)
 print(f"\nFinal Accuracy: {accuracy * 100:.2f}%")
 
 # JSONファイルに保存
-with open("output_results.json", "w", encoding="utf-8") as f:
+with open("output_results2.json", "w", encoding="utf-8") as f:
     json.dump(results, f, indent=2, ensure_ascii=False)
 
-print("\n--- output_results.json に詳細を保存しました ---")
+print("\n--- output_results2.json に詳細を保存しました ---")
 
 # 6. テーブル形式でプレビュー表示
 df = pd.DataFrame(results)
